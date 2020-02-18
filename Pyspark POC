@@ -1,1 +1,94 @@
+select Division, Region,
+	round(avg(convert(float,TimetoInstallinMinutes)/1440),1) as metric_value
+	--sum(case when metappt = 'Y' then 1 else 0 end) MetAppts,
+	--sum(case when metappt in ('Y','N') then 1 else 0 end) MetMissedTotal
+from
+	(
+select  
+division, 
+region, 
+OrderType,
+TimetoInstallinMinutes,
+acctnum
+from 
+	(
+	select 
+	division, 
+	region, 
+	OrderType,
+	TimetoInstallinMinutes,
+	acctnum,
+	max(customer_class) as customer_class
+	from 
+		(
+		Select REPLACE(odhb.DIVISION_NAME,' DIVISION' ,'') division, 
+		REPLACE( odhb.MARKET_NAME , ' Region' ,'') region, 
+		'Installs' OrderType,
+		TimetoInstallinMinutes,
+		HouseKey,
+		osid.FTA_ID,
+		CASE WHEN osid.SourceSystemID in (2) THEN SUBSTRING(workordernumber, 1, 13) END acctnum
+		from comtrac_dw.dbo.ONTRACK_STAGE_install_DETAIL osid
+		join comtrac_dw.dbo.ONTRAC_DIM_HierarchyBilling odhb on osid.FTA_ID = odhb.FTA_ID
+		join comtrac_dw.dbo.ontrac_dim_employee ode on osid.techemployeeid = ode.employeeid
+		where osid.CompleteDate >= DATEADD(month, -3, GETDATE())
+		and osid.CompleteDate < GETDATE()
+		and osid.TRFlag = 'Y' --preliminary flag in ontrac to make sure the order was scheduled
+		and osid.StatusCD not in ('X') --excludes any canceled order
+		and osid.orderclasscd not in ('D','Z') --installs always remove discos and sros (sros are only from vantage/csg)
+		and ISNULL(osid.jobstatus,'') <> 'X' --job status is only a CSG field it will always be null for Amdocs
+		and ode.EmployeeTypeCD not in ('n','f') --excludes no truck and front counter tech ids
+		and osid.SourceSystemID = 2
+		)a left join  comtrac_dw.dbo.ONTRACK_STAGE_ECX2 x (nolock)
+	ON a.HouseKey = x.HOUSE_KEY AND a.FTA_ID = x.FTA_CODE
+	group by division, 
+	region, 
+	OrderType,
+	TimetoInstallinMinutes,
+	acctnum
+	)b Where customer_class ='RESIDENTIAL' -- residential account
 
+union 
+	select  division, 
+	region, 
+	OrderType,
+	TimetoInstallinMinutes,
+	acctnum
+	from 
+		(
+		select division, 
+		region, 
+		OrderType,
+		TimetoInstallinMinutes,
+		acctnum,
+		max(customer_class) as customer_class
+		from 
+			(
+			Select REPLACE(odhb.DIVISION_NAME,' DIVISION' ,'') division, 
+			REPLACE( odhb.MARKET_NAME , ' Region' ,'')region, 
+			'Installs' OrderType,
+			TimetoInstallinMinutes,
+			HouseKey,
+			osid.FTA_ID,
+			CASE WHEN osid.SourceSystemID in (1) THEN SUBSTRING(workordernumber, 1, 13) END acctnum
+			from comtrac_dw.dbo.ONTRACK_STAGE_install_DETAIL osid
+				join comtrac_dw.dbo.ONTRAC_DIM_HierarchyBilling odhb on osid.FTA_ID = odhb.FTA_ID
+				join comtrac_dw.dbo.ontrac_dim_employee ode on osid.techemployeeid = ode.employeeid
+			where osid.CompleteDate >= DATEADD(month, -3, GETDATE())
+			and osid.CompleteDate < GETDATE()
+			and osid.TRFlag = 'Y' --preliminary flag in ontrac to make sure the order was scheduled
+			and osid.StatusCD not in ('X') --excludes any canceled order
+			and osid.orderclasscd not in ('D','Z') --installs always remove discos and sros (sros are only from vantage/csg)
+			and ISNULL(osid.jobstatus,'') <> 'X' --job status is only a CSG field it will always be null for Amdocs
+			and ode.EmployeeTypeCD not in ('n','f') --excludes no truck and front counter tech ids
+			and osid.SourceSystemID = 1
+			)a left join  comtrac_dw.dbo.ONTRACK_STAGE_ECX2 x (nolock)
+		ON a.acctnum COLLATE SQL_Latin1_General_CP1_CI_AS = x.ACCT_NBR
+		group by division, 
+		region, 
+		OrderType,
+		TimetoInstallinMinutes,
+		acctnum
+		)b Where customer_class ='RESIDENTIAL' -- residential account
+)t 
+group by division, region,OrderType
